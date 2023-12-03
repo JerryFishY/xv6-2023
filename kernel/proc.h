@@ -104,4 +104,6 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  //TODO: actually, we need to ensure trace_mask is 0 after initilization, or there will be accidental tracing
+  int trace_mask;            // Trace mask for the process, default is zero
 };
