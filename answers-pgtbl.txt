@@ -1,0 +1,19 @@
+1. Which other xv6 system call(s) could be made faster using this shared page? Explain how.
+
+System calls like uptime() could be a good candidate, we could map a certain va to the pa that record the current time and set it to RD_ONLY for user process.
+
+2. For every leaf page in the vmprint output, explain what it logically contains and what its permission bits are. Figure 3.4 in the xv6 book might be helpful, although note that the figure might have a slightly different set of pages than the init process that's being inspected here.
+
+..0: pte 0x0000000021fd9c01 pa 0x0000000087f67000
+.. ..0: pte 0x0000000021fd9801 pa 0x0000000087f66000
+.. .. ..0: pte 0x0000000021fda01b pa 0x0000000087f68000
+.. .. ..1: pte 0x0000000021fd9417 pa 0x0000000087f65000
+.. .. ..2: pte 0x0000000021fd9007 pa 0x0000000087f64000
+.. .. ..3: pte 0x0000000021fd8c17 pa 0x0000000087f63000
+..255: pte 0x0000000021fda801 pa 0x0000000087f6a000
+.. ..511: pte 0x0000000021fda401 pa 0x0000000087f69000
+.. .. ..509: pte 0x0000000021fdcc13 pa 0x0000000087f73000
+.. .. ..510: pte 0x0000000021fdd007 pa 0x0000000087f74000
+.. .. ..511: pte 0x0000000020001c0b pa 0x0000000080007000
+
+we can get its meaning consulting RISCV specifications, which is omited here.
