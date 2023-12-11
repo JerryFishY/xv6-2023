@@ -302,35 +302,46 @@ uvmfree(pagetable_t pagetable, uint64 sz)
     uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
   freewalk(pagetable);
 }
-
-// Given a parent process's page table, copy
-// its memory into a child's page table.
-// Copies both the page table and the
-// physical memory.
+//COW style page table
+// Given a parent process's page table,
+// simply create the pagetable for the child process
+// with its PTEs pointing to the same physical memory 
 // returns 0 on success, -1 on failure.
-// frees any allocated pages on failure.
+// no handler for failure
+
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
-  pte_t *pte;
+  pte_t *pte_old,*pte_new;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
-    if((pte = walk(old, i, 0)) == 0)
+    if((pte_old = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
-    if((*pte & PTE_V) == 0)
+    if((*pte_old & PTE_V) == 0)
       panic("uvmcopy: page not present");
-    pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
+    
+    pa = PTE2PA(*pte_old);
+    flags = PTE_FLAGS(*pte_old);
+    
+    if(mappages(new, i, PGSIZE, pa, flags) != 0){
       goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
-      goto err;
+    }else{
+      acquire(&cnt_lock);
+      ref_count[(pa-KERNBASE)/PGSIZE]++;
+      release(&cnt_lock);
     }
+    pte_new=walk(new,i,0);
+    if(PTE_W & *pte_old || PTE_C & *pte_old){
+      *pte_old &= ~PTE_W;
+      *pte_old |= PTE_C;
+    }
+    if(PTE_W & *pte_new || PTE_C & *pte_old){
+      *pte_new &= ~PTE_W;
+      *pte_new |= PTE_C;
+    }
+
   }
   return 0;
 
@@ -352,24 +363,51 @@ uvmclear(pagetable_t pagetable, uint64 va)
   *pte &= ~PTE_U;
 }
 
-// Copy from kernel to user.
+// Copy from kernel to user in a COW way.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
 int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
-  uint64 n, va0, pa0;
+  if(dstva > MAXVA){
+    return -1;
+  }
+  uint64 n, va0, pa0, panew;
   pte_t *pte;
-
+  uint flags;
+  
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
     if(va0 >= MAXVA)
       return -1;
+
     pte = walk(pagetable, va0, 0);
-    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
-       (*pte & PTE_W) == 0)
+    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
       return -1;
-    pa0 = PTE2PA(*pte);
+    
+    if((*pte & PTE_W) == 0 && (*pte & PTE_C) == 0){
+      return -1;
+    }
+
+    pa0 = PTE2PA((uint64)*pte);
+    flags = PTE_FLAGS(*pte);
+
+    if(*pte & PTE_C){
+      
+      if((panew = (uint64)kalloc())==0){
+        panic("copyout: kalloc failed");
+        return -1;
+      }
+
+      memmove((void*)panew,(void*)pa0,PGSIZE);
+      kfree((void*)pa0);
+      pa0=panew;
+      *pte=PA2PTE(pa0) | flags;
+      *pte &= ~PTE_C;
+      *pte |= PTE_W;
+
+    }
+    
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;

@@ -67,7 +67,39 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  } else if(r_scause()==15){
+    // printf("DEBUG: page fault\n");
+    pte_t * pte;
+    uint64 va,pa;
+    uint flags;
+    char* mem;
+    
+    va=r_stval();
+    if(va>=MAXVA){
+      exit(-1);
+    }
+    pte=walk(p->pagetable,va,0);
+
+    if(*pte & PTE_C){
+      //copy-on-write
+      pa = PTE2PA(*pte);
+      flags = PTE_FLAGS(*pte);
+      
+      if((mem = kalloc()) == 0)
+        panic("usertrap(): kalloc failed");
+      memmove(mem, (char*)pa, PGSIZE);
+      
+      *pte=PA2PTE(mem) | flags;
+      *pte &= ~PTE_C;
+      *pte |= PTE_W;
+
+      kfree((void* )pa);
+    }else{
+      // real page fault
+      setkilled(p);
+    }
+  } 
+  else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     setkilled(p);

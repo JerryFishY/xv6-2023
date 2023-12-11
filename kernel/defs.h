@@ -63,6 +63,10 @@ void            ramdiskrw(struct buf*);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+// to track reference to each pages
+extern int ref_count[];
+extern struct spinlock cnt_lock;
+
 
 // log.c
 void            initlog(int, struct superblock*);
