@@ -1,0 +1,5 @@
+1. Why are there missing keys with 2 threads, but not with 1 thread? Identify a sequence of events with 2 threads that can lead to a key being missing. Submit your sequence with a short explanation in answers-thread.txt.
+
+That is because when w threads are cooperating with each other, they may access the same bucket. And when one thread change the bucket , it may influence another thread.
+
+For example, consider two threads A and B. A and B inserts into the same bucket. And B have the possibility to overlap the entry that A just inserts.
