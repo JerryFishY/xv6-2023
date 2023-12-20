@@ -169,6 +169,7 @@ bad:
   return -1;
 }
 
+
 // Is the directory dp empty except for "." and ".." ?
 static int
 isdirempty(struct inode *dp)
@@ -356,6 +357,32 @@ sys_open(void)
     f->type = FD_INODE;
     f->off = 0;
   }
+  if (ip->type == T_SYMLINK && (omode & O_NOFOLLOW) == 0) {
+    // recursively follow symlink
+    int reentrant_cnt = 0;
+    char sympath[MAXPATH];
+    while (1) {
+        if (reentrant_cnt >= MAX_RECUR) {
+            iunlockput(ip);
+            end_op();
+            return -1;
+        }
+        if (readi(ip, 0, (uint64)sympath, ip->size-MAXPATH, MAXPATH) != MAXPATH) {
+            panic("open symlink");
+        }
+        iunlockput(ip);
+        if ((ip = namei(sympath)) == 0) {
+            // could not find this file
+            end_op();
+            return -1;
+        }
+        ilock(ip);
+        if (ip->type != T_SYMLINK) {
+            break;
+        }
+        reentrant_cnt++;
+    }
+  }
   f->ip = ip;
   f->readable = !(omode & O_WRONLY);
   f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
@@ -501,5 +528,32 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64 
+sys_symlink(void){
+  char tf[MAXPATH],path[MAXPATH];
+  struct inode *ip;
+
+  if (argstr(0, tf, MAXPATH) < 0 ) {
+    return -1;
+  }
+  if(argstr(1, path, MAXPATH) < 0){
+    return -1;
+  }
+  begin_op();
+  if ((ip = namei(path)) == 0) {
+    // the path inode does not exist
+    ip = create(path, T_SYMLINK, 0, 0);
+    iunlock(ip);
+  } 
+  ilock(ip);
+  // write the target file path name into the end of inode
+  if (writei(ip, 0, (uint64)tf, ip->size, MAXPATH) != MAXPATH) {
+    panic("symlink");
+  }
+  iunlockput(ip);
+  end_op();
   return 0;
 }
