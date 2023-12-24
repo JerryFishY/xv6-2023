@@ -2125,6 +2125,7 @@ kernmem(char *s)
   int pid;
 
   for(a = (char*)(KERNBASE); a < (char*) (KERNBASE+2000000); a += 50000){
+    printf("k\n");
     pid = fork();
     if(pid < 0){
       printf("%s: fork failed\n", s);

@@ -5,6 +5,12 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "fcntl.h"
+#include "spinlock.h"
+#include "sleeplock.h"
+#include "proc.h"
+#include "file.h"
+
 
 /*
  * the kernel's page table.
@@ -447,5 +453,40 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return 0;
   } else {
     return -1;
+  }
+}
+
+void vmaunmap(pagetable_t pagetable,uint64 va,  uint64 len, void* vmain)
+{
+  uint64 addr,offset;
+  pte_t* pte;
+  struct VMA * vma;
+  vma =  (struct VMA *)vmain;
+  
+  for(addr = va; addr < va+len; addr+=PGSIZE){
+    if((pte = walk(pagetable, addr, 0)) == 0)
+      continue;
+    if(PTE_FLAGS(*pte) == PTE_V){
+      panic("vmaunmaop\n");
+    }
+    if(*pte & PTE_V){
+      uint64 pa = PTE2PA(*pte);
+      if((*pte & PTE_D) && (vma->flags & MAP_SHARED)){
+        begin_op();
+          ilock(vma->f->ip);
+          offset = addr - vma->address;
+          if(offset < 0) {
+            writei(vma->f->ip, 0, pa + (-offset), vma->offset, PGSIZE + offset);
+          } else if(offset + PGSIZE > vma->length){  // if the last page is not a full 4k page
+            writei(vma->f->ip, 0, pa, vma->offset + offset, vma->length - offset);
+          } else { // full 4k pages
+          writei(vma->f->ip, 0, pa, vma->offset + offset, PGSIZE);
+        }
+        iunlock(vma->f->ip);
+        end_op();
+      }
+      kfree((void*)pa);
+      *pte=0;
+    }
   }
 }

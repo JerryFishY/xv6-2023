@@ -145,7 +145,9 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
+  for(int i=0;i<VMA_NUM;i++){
+    p->VMAs[i].valid=0;
+  }
   return p;
 }
 
@@ -158,6 +160,9 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+  for(int i=0;i<VMA_NUM;i++){
+    vmaunmap(p->pagetable,p->VMAs[i].address,p->VMAs[i].length,&p->VMAs[i]);
+  }
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
@@ -271,6 +276,7 @@ growproc(int n)
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
   p->sz = sz;
+  // printf("DEBUG: process memory: %d",(int)p->sz);
   return 0;
 }
 
@@ -282,6 +288,7 @@ fork(void)
   int i, pid;
   struct proc *np;
   struct proc *p = myproc();
+  struct VMA *vma;
 
   // Allocate process.
   if((np = allocproc()) == 0){
@@ -307,6 +314,14 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+
+  for(i = 0; i< VMA_NUM; i++){
+    vma=&p->VMAs[i];
+    if(vma->valid){
+      np->VMAs[i]=*vma;
+      filedup(vma->f);
+    }
+  }
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 

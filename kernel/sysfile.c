@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -499,6 +500,172 @@ sys_pipe(void)
     p->ofile[fd1] = 0;
     fileclose(rf);
     fileclose(wf);
+    return -1;
+  }
+  return 0;
+}
+
+uint64 sys_mmap(void){
+  uint64 addr;
+  uint64 mmapend; 
+  size_t len;
+  int prot,flags,fd;
+  off_t offset;
+  struct file* f;
+  struct proc* p;
+  struct VMA* vma,*tvma;
+  printf("DEBUG: mmap\n");
+  // Parameter extraction
+  argaddr(0, &addr);
+  argaddr(1,&len);
+  argint(2,&prot);
+  argint(3,&flags);
+  argfd(4,&fd,&f);
+  argaddr(5,(uint64 *)&offset);
+
+  if(len == 0)
+    return -1;
+  
+  // Check file permission
+  if((!f->readable && (prot & PROT_READ))||(!f->writable && (prot & PROT_WRITE) && !(flags & MAP_PRIVATE)))
+    return -1;
+
+  len = PGROUNDUP(len);
+  p = myproc();
+  vma = 0;
+  mmapend = MMAP;
+
+  // Search for an empty entry
+  for(int i = 0 ;i < VMA_NUM ;i++){
+    vma=&p->VMAs[i];
+    if(vma->valid == 0){
+      break;
+    }
+  }
+  
+  if(!vma){
+    return -1;
+  }
+  //Search for an empty VMA entry
+  for(int i = 0 ;i < VMA_NUM ;i++){
+    tvma=&p->VMAs[i];
+    if(tvma->valid){
+      printf("DEBUG: valid");
+      if(tvma->address<MMAP){
+        mmapend=PGROUNDDOWN(tvma->address);
+      }
+    }
+  }
+  printf("mmapend: %p, MMAP: %p\n",mmapend,MMAP);
+  vma->valid = 1;
+  vma->address=mmapend-len;
+  vma->length=len;
+  vma->prot=prot;
+  vma->flags=flags;
+  vma->f=f;
+  vma->offset=offset;
+
+  filedup(vma->f);
+
+  return vma->address;
+}
+
+struct VMA* vmalookup(struct proc* p,uint64 va){
+  struct VMA* vma;
+  for(int i = 0; i < VMA_NUM;i++){
+    vma=&p->VMAs[i];
+    if(vma->valid && va >= vma->address && va < vma->address+vma->length){
+      return vma;
+    }
+  }
+  return 0;
+}
+
+// int munmap(void *addr, size_t len);
+uint64 sys_munmap(void){
+  uint64 addr,len,addr_align;
+  int unmap_bytes;
+  struct proc* p;
+  struct VMA* vma;
+
+  argaddr(0,&addr);
+  argaddr(1,&len);
+
+  if(len == 0){
+    return -1;
+  }
+
+  p=myproc();
+  vma=vmalookup(p,addr);
+
+  if(vma == 0){
+    return -1;
+  }
+
+  if(addr > vma->address &&addr + len < vma->address + vma->length){
+    return -1;
+  }
+
+  addr_align = addr;
+  if(addr > vma->address){
+    addr_align = PGROUNDUP(addr);
+  }
+
+  unmap_bytes=len-(addr_align-addr);
+  unmap_bytes = unmap_bytes < 0 ? 0:unmap_bytes;
+  
+  vmaunmap(p->pagetable, addr_align, unmap_bytes, vma); 
+
+  if ( addr <= vma->address && addr + len > vma->address ) { 
+    vma->offset += addr + len - vma->address;
+    vma->address = addr + len;
+  }
+  
+
+  if(vma->length <= len) {
+    fileclose(vma->f);
+    vma->valid = 0;
+  } else{
+    vma->length -= len;
+  }
+
+  
+  return 0;
+}
+
+int lazyalloc(uint64 va){
+  struct proc * p;
+  struct VMA * vma;
+  uint64 pa;
+  int flags;
+
+  p = myproc();
+  vma = vmalookup(p,va);
+  if(!vma){
+    return -1;
+  }
+  if((pa = (uint64) kalloc()) == 0){
+    return -1;
+  }
+  memset((void *)pa,0,PGSIZE);
+  begin_op();
+  
+  ilock(vma->f->ip);
+
+  readi(vma->f->ip,0,pa,vma->offset+PGROUNDDOWN(va-vma->address),PGSIZE);
+  iunlock(vma->f->ip);
+  
+  end_op();
+  
+  flags = PTE_U;
+  if(vma->prot & PROT_READ)
+    flags |= PTE_R;
+  if(vma->prot & PROT_WRITE)
+    flags |= PTE_W;
+  if(vma->prot & PROT_EXEC)
+    flags |= PTE_X;
+  printf("DEBUG: map\n");
+  if(mappages(p->pagetable, va, PGSIZE, pa, flags) < 0){
     return -1;
   }
   return 0;
